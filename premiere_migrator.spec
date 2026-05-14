@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
+import os
 from PyInstaller.utils.hooks import collect_all
 
 # Collect customtkinter and darkdetect assets
@@ -45,15 +46,16 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/icon.ico' if sys.platform == 'win32' else None,
+    icon='assets/icon.ico' if (sys.platform == 'win32' and os.path.exists('assets/icon.ico')) else None,
 )
 
 # ── Mac: .app bundle ───────────────────────────────────────────
 if sys.platform == 'darwin':
+    _mac_icon = 'assets/icon.icns' if os.path.exists('assets/icon.icns') else None
     app = BUNDLE(
         exe,
         name='PremiereMigrator.app',
-        icon='assets/icon.icns',
+        icon=_mac_icon,
         bundle_identifier='com.premieremigrator.app',
         info_plist={
             'CFBundleName': 'PremiereMigrator',

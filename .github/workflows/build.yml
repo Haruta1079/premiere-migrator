@@ -1,6 +1,5 @@
 name: Build & Release
 
-# タグ (v*.*.*) を push したとき、または手動実行したときにビルド
 on:
   push:
     tags:
@@ -8,14 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'バージョン番号 (例: v1.0.0)'
+        description: 'バージョン番号 (例: v1.0.1)'
         required: true
-        default: 'v1.0.0'
+        default: 'v1.0.1'
 
 jobs:
-  # ────────────────────────────────────────────────
-  # Windows: PremiereMigrator.exe
-  # ────────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────
+  # Windows: PremiereMigratorSetup.exe (Inno Setup インストーラー)
+  # ─────────────────────────────────────────────────────────────
   build-windows:
     runs-on: windows-latest
     steps:
@@ -25,23 +24,33 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pyinstaller pillow
+      - name: Install Python dependencies
+        run: pip install customtkinter pillow pyinstaller
 
-      - name: Build .exe
+      - name: Generate icon
+        run: python create_icons.py
+
+      - name: Build .exe with PyInstaller
         run: pyinstaller premiere_migrator.spec
 
-      - name: Upload Windows artifact
+      - name: Build installer with Inno Setup
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.version }}
+        run: |
+          $ver = $env:APP_VERSION -replace '^v',''
+          $env:APP_VERSION = $ver
+          & "C:\Program Files (x86)\Inno Setup 6\iscc.exe" installer.iss
+
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: windows-exe
-          path: dist/PremiereMigrator.exe
+          name: windows-installer
+          path: dist/PremiereMigratorSetup.exe
 
-  # ────────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────
   # macOS: PremiereMigrator.dmg
-  # ────────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
     steps:
@@ -51,24 +60,20 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pyinstaller pillow
+      - name: Install Python dependencies
+        run: pip install customtkinter pillow pyinstaller
 
-      - name: Build .app
+      - name: Generate icons (.ico + .icns)
+        run: python create_icons.py
+
+      - name: Build .app with PyInstaller
         run: pyinstaller premiere_migrator.spec
 
       - name: Create .dmg
         run: |
-          # アプリをDMG用フォルダにコピー
           mkdir -p dist/dmg
           cp -r "dist/PremiereMigrator.app" "dist/dmg/"
-
-          # Applicationsへのシンボリックリンクを追加（ドラッグ&ドロップでインストール可能に）
           ln -s /Applications "dist/dmg/Applications"
-
-          # DMG作成
           hdiutil create \
             -volname "Premiere Migrator" \
             -srcfolder dist/dmg \
@@ -76,15 +81,15 @@ jobs:
             -format UDZO \
             dist/PremiereMigrator.dmg
 
-      - name: Upload macOS artifact
+      - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
           name: mac-dmg
           path: dist/PremiereMigrator.dmg
 
-  # ────────────────────────────────────────────────
-  # GitHub Release を作成してファイルを添付
-  # ────────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────
+  # GitHub Release を作成して両ファイルを添付
+  # ─────────────────────────────────────────────────────────────
   release:
     needs: [build-windows, build-mac]
     runs-on: ubuntu-latest
@@ -92,19 +97,19 @@ jobs:
       contents: write
 
     steps:
-      - name: Download Windows artifact
+      - name: Download Windows installer
         uses: actions/download-artifact@v4
         with:
-          name: windows-exe
+          name: windows-installer
           path: artifacts/windows
 
-      - name: Download macOS artifact
+      - name: Download macOS DMG
         uses: actions/download-artifact@v4
         with:
           name: mac-dmg
           path: artifacts/mac
 
-      - name: Determine version
+      - name: Determine version tag
         id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -121,22 +126,18 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            ## Premiere Pro Settings Migrator ${{ steps.version.outputs.tag }}
+            ## Premiere Migrator ${{ steps.version.outputs.tag }}
 
-            Premiere Proの設定（モーショングラフィックステンプレート・エフェクトプリセット・キーボードショートカット・ワークスペース）をPC間・Mac↔Windows間で一括移行できるツールです。
+            Premiere Proの設定（MOGRTテンプレート・エフェクトプリセット・キーボードショートカット・ワークスペース）をPC間・Mac↔Windows間で一括移行できるツールです。
 
             ### ダウンロード
 
-            | プラットフォーム | ファイル |
-            |---|---|
-            | Windows | `PremiereMigrator.exe` |
-            | Mac | `PremiereMigrator.dmg` |
+            | OS | ファイル | 手順 |
+            |---|---|---|
+            | Windows | `PremiereMigratorSetup.exe` | ダブルクリックしてインストール |
+            | Mac | `PremiereMigrator.dmg` | 開いてApplicationsフォルダへドラッグ |
 
-            ### インストール方法
-            - **Windows**: `PremiereMigrator.exe` をダブルクリックして起動
-            - **Mac**: `PremiereMigrator.dmg` を開き、アプリをApplicationsフォルダにドラッグ
-
-            > **Macの注意**: 初回起動時に「開発元を確認できません」と表示された場合は、Controlキーを押しながらアプリをクリック→「開く」を選択してください。
+            > **Macの注意**: 初回起動時に警告が出た場合は、Controlキーを押しながらクリック→「開く」を選択してください。
           files: |
-            artifacts/windows/PremiereMigrator.exe
+            artifacts/windows/PremiereMigratorSetup.exe
             artifacts/mac/PremiereMigrator.dmg
