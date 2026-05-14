@@ -1,0 +1,142 @@
+name: Build & Release
+
+# タグ (v*.*.*) を push したとき、または手動実行したときにビルド
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'バージョン番号 (例: v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  # ────────────────────────────────────────────────
+  # Windows: PremiereMigrator.exe
+  # ────────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller pillow
+
+      - name: Build .exe
+        run: pyinstaller premiere_migrator.spec
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/PremiereMigrator.exe
+
+  # ────────────────────────────────────────────────
+  # macOS: PremiereMigrator.dmg
+  # ────────────────────────────────────────────────
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller pillow
+
+      - name: Build .app
+        run: pyinstaller premiere_migrator.spec
+
+      - name: Create .dmg
+        run: |
+          # アプリをDMG用フォルダにコピー
+          mkdir -p dist/dmg
+          cp -r "dist/PremiereMigrator.app" "dist/dmg/"
+
+          # Applicationsへのシンボリックリンクを追加（ドラッグ&ドロップでインストール可能に）
+          ln -s /Applications "dist/dmg/Applications"
+
+          # DMG作成
+          hdiutil create \
+            -volname "Premiere Migrator" \
+            -srcfolder dist/dmg \
+            -ov \
+            -format UDZO \
+            dist/PremiereMigrator.dmg
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-dmg
+          path: dist/PremiereMigrator.dmg
+
+  # ────────────────────────────────────────────────
+  # GitHub Release を作成してファイルを添付
+  # ────────────────────────────────────────────────
+  release:
+    needs: [build-windows, build-mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+          path: artifacts/windows
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-dmg
+          path: artifacts/mac
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Premiere Migrator ${{ steps.version.outputs.tag }}"
+          draft: false
+          prerelease: false
+          body: |
+            ## Premiere Pro Settings Migrator ${{ steps.version.outputs.tag }}
+
+            Premiere Proの設定（モーショングラフィックステンプレート・エフェクトプリセット・キーボードショートカット・ワークスペース）をPC間・Mac↔Windows間で一括移行できるツールです。
+
+            ### ダウンロード
+
+            | プラットフォーム | ファイル |
+            |---|---|
+            | Windows | `PremiereMigrator.exe` |
+            | Mac | `PremiereMigrator.dmg` |
+
+            ### インストール方法
+            - **Windows**: `PremiereMigrator.exe` をダブルクリックして起動
+            - **Mac**: `PremiereMigrator.dmg` を開き、アプリをApplicationsフォルダにドラッグ
+
+            > **Macの注意**: 初回起動時に「開発元を確認できません」と表示された場合は、Controlキーを押しながらアプリをクリック→「開く」を選択してください。
+          files: |
+            artifacts/windows/PremiereMigrator.exe
+            artifacts/mac/PremiereMigrator.dmg
